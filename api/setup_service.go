@@ -11,20 +11,35 @@ import (
 )
 
 type SetupInput struct {
-	IdentityProvider                 string `json:"identity_provider"`
-	AdminUserName                    string `json:"admin_user_name,omitempty"`
-	AdminPassword                    string `json:"admin_password,omitempty"`
-	AdminPasswordConfirmation        string `json:"admin_password_confirmation,omitempty"`
-	DecryptionPassphrase             string `json:"decryption_passphrase"`
-	DecryptionPassphraseConfirmation string `json:"decryption_passphrase_confirmation"`
-	EULAAccepted                     string `json:"eula_accepted"`
-	HTTPProxyURL                     string `json:"http_proxy,omitempty"`
-	HTTPSProxyURL                    string `json:"https_proxy,omitempty"`
-	NoProxy                          string `json:"no_proxy,omitempty"`
-	IDPMetadata                      string `json:"idp_metadata,omitempty"`
-	BoshIDPMetadata                  string `json:"bosh_idp_metadata,omitempty"`
-	RBACAdminGroup                   string `json:"rbac_saml_admin_group,omitempty"`
-	RBACGroupsAttribute              string `json:"rbac_saml_groups_attribute,omitempty"`
+	IdentityProvider                 string       `json:"identity_provider"`
+	AdminUserName                    string       `json:"admin_user_name,omitempty"`
+	AdminPassword                    string       `json:"admin_password,omitempty"`
+	AdminPasswordConfirmation        string       `json:"admin_password_confirmation,omitempty"`
+	DecryptionPassphrase             string       `json:"decryption_passphrase"`
+	DecryptionPassphraseConfirmation string       `json:"decryption_passphrase_confirmation"`
+	EULAAccepted                     string       `json:"eula_accepted"`
+	HTTPProxyURL                     string       `json:"http_proxy,omitempty"`
+	HTTPSProxyURL                    string       `json:"https_proxy,omitempty"`
+	NoProxy                          string       `json:"no_proxy,omitempty"`
+	IDPMetadata                      string       `json:"idp_metadata,omitempty"`
+	BoshIDPMetadata                  string       `json:"bosh_idp_metadata,omitempty"`
+	RBACAdminGroup                   string       `json:"rbac_saml_admin_group,omitempty"`
+	RBACGroupsAttribute              string       `json:"rbac_saml_groups_attribute,omitempty"`
+	LDAPSettings                     LDAPSettings `json:"ldap_settings"`
+}
+
+type LDAPSettings struct {
+	ServerURL          string `json:"server_url"`
+	Username           string `json:"ldap_username"`
+	Password           string `json:"ldap_password"`
+	UserSearchBase     string `json:"user_search_base"`
+	UserSearchFilter   string `json:"user_search_filter"`
+	GroupSearchBase    string `json:"group_search_base"`
+	GroupSearchFilter  string `json:"group_search_filter"`
+	Referrals          string `json:"ldap_referrals"`
+	ServerSSLCert      string `json:"server_ssl_cert"`
+	RBACAdminGroupName string `json:"ldap_rbac_admin_group_name"`
+	EmailAttribute     string `json:"email_attribute"`
 }
 
 type SetupOutput struct{}

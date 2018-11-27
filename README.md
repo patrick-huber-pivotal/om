@@ -61,7 +61,8 @@ Commands:
   configure-authentication        configures Ops Manager with an internal userstore and admin user account
   configure-director              configures the director
   configure-product               configures a staged product
-  configure-saml-authentication   configures Ops Manager with SAML authentication
+  configure-saml-authentication   configures Ops Manager with SAML 
+  configure-ldap-authentication   configures Ops Manager with LDAP 
   create-certificate-authority    creates a certificate authority on the Ops Manager
   create-vm-extension             creates/updates a VM extension
   credential-references           list credential references for a deployed product
