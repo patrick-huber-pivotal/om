@@ -16,11 +16,13 @@ import (
 	"strings"
 )
 
-const DownloadListFilename = "download-file.json"
+const DownloadProductOutputFilename = "download-file.json"
 
-type downloadList struct {
-	Product  string `json:"product,omitempty"`
-	Stemcell string `json:"stemcell,omitempty"`
+type outputList struct {
+	ProductPath     string `json:"product_path,omitempty"`
+	ProductSlug     string `json:"product_slug,omitempty"`
+	StemcellPath    string `json:"stemcell_path,omitempty"`
+	StemcellVersion string `json:"stemcell_version,omitempty"`
 }
 
 //go:generate counterfeiter -o ./fakes/pivnet_downloader_service.go --fake-name PivnetDownloader . PivnetDownloader
@@ -85,8 +87,6 @@ func (c DownloadProduct) Execute(args []string) error {
 	var productFileName, stemcellFileName string
 	var releaseID int
 
-	defer c.writerDownloadedFileList(productFileName, stemcellFileName)
-
 	c.init()
 
 	releaseID, productFileName, err = c.downloadProductFile(c.Options.ProductSlug, c.Options.ProductVersion, c.Options.FileGlob)
@@ -95,7 +95,7 @@ func (c DownloadProduct) Execute(args []string) error {
 	}
 
 	if !c.Options.Stemcell {
-		return nil
+		return c.writeOutputFile(productFileName, stemcellFileName, "")
 	}
 
 	c.logger.Info("Downloading stemcell")
@@ -121,23 +121,25 @@ func (c DownloadProduct) Execute(args []string) error {
 		return fmt.Errorf("could not download stemcell: %s", err)
 	}
 
-	return nil
+	return c.writeOutputFile(productFileName, stemcellFileName, stemcellVersion)
 }
 
-func (c DownloadProduct) writerDownloadedFileList(productFileName string, stemcellFileName string) error {
-	c.logger.Info(fmt.Sprintf("Writing a list of downloaded artifact to %s", DownloadListFilename))
-	downloadList := downloadList{
-		Product:  productFileName,
-		Stemcell: stemcellFileName,
+func (c DownloadProduct) writeOutputFile(productFileName string, stemcellFileName string, stemcellVersion string) error {
+	c.logger.Info(fmt.Sprintf("Writing a list of downloaded artifact to %s", DownloadProductOutputFilename))
+	outputList := outputList{
+		ProductPath:  productFileName,
+		StemcellPath: stemcellFileName,
+		ProductSlug: c.Options.ProductSlug,
+		StemcellVersion: stemcellVersion,
 	}
 
-	downloadListFile, err := os.Create(path.Join(c.Options.OutputDir, DownloadListFilename))
+	outputFile, err := os.Create(path.Join(c.Options.OutputDir, DownloadProductOutputFilename))
 	if err != nil {
-		return fmt.Errorf("could not create %s: %s", DownloadListFilename, err)
+		return fmt.Errorf("could not create %s: %s", DownloadProductOutputFilename, err)
 	}
-	defer downloadListFile.Close()
+	defer outputFile.Close()
 
-	return json.NewEncoder(downloadListFile).Encode(downloadList)
+	return json.NewEncoder(outputFile).Encode(outputList)
 }
 
 func (c *DownloadProduct) init() {
@@ -245,6 +247,9 @@ func getLatestStemcell(dependencies []pivnet.ReleaseDependency) (string, string,
 		if strings.Contains(dependency.Release.Product.Slug, "stemcells") {
 			versionString := dependency.Release.Version
 			splitVersions := strings.Split(versionString, ".")
+			if len(splitVersions) == 1 {
+				splitVersions = []string{splitVersions[0], "0"}
+			}
 			if len(splitVersions) != 2 {
 				return stemcellSlug, stemcellVersion, fmt.Errorf(errorForVersion, versionString)
 			}

@@ -15,86 +15,6 @@ import (
 	"github.com/onsi/gomega/gexec"
 )
 
-const propertiesJSON = `{
-	".properties.something": {"value": "configure-me"},
-	".a-job.job-property": {"value": {"identity": "username", "password": "example-new-password"} },
-	".top-level-property": { "value": [ { "guid": "some-guid", "name": "max", "my-secret": {"secret": "headroom"} } ] }
-}`
-
-const productNetworkJSON = `{
-  "singleton_availability_zone": {"name": "az-one"},
-  "other_availability_zones": [{"name": "az-two" }, {"name": "az-three"}],
-  "network": {"name": "network-one"}
-}`
-
-const nsxResourceConfigJSON = `
-{
-  "some-job": {
-    "instances": 1,
-    "persistent_disk": { "size_mb": "20480" },
-    "instance_type": { "id": "m1.medium" },
-    "nsx_security_groups":["sg1", "sg2"],
-    "nsx_lbs": [
-    {
-      "edge_name": "edge-1",
-      "pool_name": "pool-1",
-      "security_group": "sg-1",
-      "port": "5000"
-    },
-    {
-      "edge_name": "edge-2",
-      "pool_name": "pool-2",
-      "security_group": "sg-2",
-      "port": "5000"
-    }]
-  }
-}`
-
-const resourceConfigJSON = `
-{
-  "some-job": {
-    "instances": 1,
-    "persistent_disk": { "size_mb": "20480" },
-    "instance_type": { "id": "m1.medium" },
-    "additional_vm_extensions": ["some-vm-extension", "some-other-vm-extension"]
-  },
-  "some-other-job": {
-	  "instances": "automatic",
-		"persistent_disk": { "size_mb": "20480" },
-    "instance_type": { "id": "m1.medium" }
-  }
-}`
-
-const configFileContents = `---
-product-properties:
-  .properties.something:
-    value: configure-me
-  .a-job.job-property:
-    value:
-      identity: username
-      password: example-new-password
-  .top-level-property:
-    value: [ { guid: some-guid, name: max, my-secret: {secret: headroom} } ]
-network-properties:
-  singleton_availability_zone:
-    name: az-one
-  other_availability_zones:
-    - name: az-two
-    - name: az-three
-  network:
-    name: network-one
-resource-config:
-  some-job:
-    instances: 1
-    persistent_disk: { size_mb: "20480" }
-    instance_type: { id: m1.medium }
-    additional_vm_extensions: [some-vm-extension, some-other-vm-extension]
-  some-other-job:
-    instances: automatic
-    persistent_disk: { size_mb: "20480" }
-    instance_type: { id: m1.medium }
-`
-
 var _ = Describe("configure-product command", func() {
 	var (
 		server                  *httptest.Server
@@ -111,6 +31,8 @@ var _ = Describe("configure-product command", func() {
 			w.Header().Set("Content-Type", "application/json")
 
 			switch req.URL.Path {
+			case "/api/v0/installations":
+				w.Write([]byte(`{"installations": []}`))
 			case "/uaa/oauth/token":
 				w.Write([]byte(`{
 				"access_token": "some-opsman-token",
@@ -192,16 +114,23 @@ var _ = Describe("configure-product command", func() {
 	})
 
 	It("successfully configures any product", func() {
+		configFileContents := fmt.Sprintf(`{
+		"product-name": "cf",
+		"product-properties": %s,
+		"network-properties": %s,
+		"resource-config": %s
+		}`, propertiesJSON, productNetworkJSON, resourceConfigJSON)
+		configFile, err := ioutil.TempFile("", "")
+		Expect(err).ToNot(HaveOccurred())
+		configFile.WriteString(configFileContents)
+
 		command := exec.Command(pathToMain,
 			"--target", server.URL,
 			"--username", "some-username",
 			"--password", "some-password",
 			"--skip-ssl-validation",
 			"configure-product",
-			"--product-name", "cf",
-			"--product-properties", propertiesJSON,
-			"--product-network", productNetworkJSON,
-			"--product-resources", resourceConfigJSON,
+			"--config", configFile.Name(),
 		)
 
 		session, err := gexec.Start(command, GinkgoWriter, GinkgoWriter)
@@ -267,7 +196,6 @@ var _ = Describe("configure-product command", func() {
 				"--password", "some-password",
 				"--skip-ssl-validation",
 				"configure-product",
-				"--product-name", "cf",
 				"--config", configFile.Name(),
 			)
 
@@ -313,16 +241,23 @@ var _ = Describe("configure-product command", func() {
 	})
 
 	It("successfully configures a product on nsx", func() {
+		configFileContents := fmt.Sprintf(`{
+		"product-name": "cf",
+		"product-properties": %s,
+		"network-properties": %s,
+		"resource-config": %s
+		}`, propertiesJSON, productNetworkJSON, nsxResourceConfigJSON)
+		configFile, err := ioutil.TempFile("", "")
+		Expect(err).ToNot(HaveOccurred())
+		configFile.WriteString(configFileContents)
+
 		command := exec.Command(pathToMain,
 			"--target", server.URL,
 			"--username", "some-username",
 			"--password", "some-password",
 			"--skip-ssl-validation",
 			"configure-product",
-			"--product-name", "cf",
-			"--product-properties", propertiesJSON,
-			"--product-network", productNetworkJSON,
-			"--product-resources", nsxResourceConfigJSON,
+			"--config", configFile.Name(),
 		)
 
 		session, err := gexec.Start(command, GinkgoWriter, GinkgoWriter)
@@ -358,3 +293,84 @@ var _ = Describe("configure-product command", func() {
 		}`))
 	})
 })
+
+const propertiesJSON = `{
+	".properties.something": {"value": "configure-me"},
+	".a-job.job-property": {"value": {"identity": "username", "password": "example-new-password"} },
+	".top-level-property": { "value": [ { "guid": "some-guid", "name": "max", "my-secret": {"secret": "headroom"} } ] }
+}`
+
+const productNetworkJSON = `{
+  "singleton_availability_zone": {"name": "az-one"},
+  "other_availability_zones": [{"name": "az-two" }, {"name": "az-three"}],
+  "network": {"name": "network-one"}
+}`
+
+const nsxResourceConfigJSON = `
+{
+  "some-job": {
+    "instances": 1,
+    "persistent_disk": { "size_mb": "20480" },
+    "instance_type": { "id": "m1.medium" },
+    "nsx_security_groups":["sg1", "sg2"],
+    "nsx_lbs": [
+    {
+      "edge_name": "edge-1",
+      "pool_name": "pool-1",
+      "security_group": "sg-1",
+      "port": "5000"
+    },
+    {
+      "edge_name": "edge-2",
+      "pool_name": "pool-2",
+      "security_group": "sg-2",
+      "port": "5000"
+    }]
+  }
+}`
+
+const resourceConfigJSON = `
+{
+  "some-job": {
+    "instances": 1,
+    "persistent_disk": { "size_mb": "20480" },
+    "instance_type": { "id": "m1.medium" },
+    "additional_vm_extensions": ["some-vm-extension", "some-other-vm-extension"]
+  },
+  "some-other-job": {
+	  "instances": "automatic",
+		"persistent_disk": { "size_mb": "20480" },
+    "instance_type": { "id": "m1.medium" }
+  }
+}`
+
+const configFileContents = `---
+product-name: cf
+product-properties:
+  .properties.something:
+    value: configure-me
+  .a-job.job-property:
+    value:
+      identity: username
+      password: example-new-password
+  .top-level-property:
+    value: [ { guid: some-guid, name: max, my-secret: {secret: headroom} } ]
+network-properties:
+  singleton_availability_zone:
+    name: az-one
+  other_availability_zones:
+    - name: az-two
+    - name: az-three
+  network:
+    name: network-one
+resource-config:
+  some-job:
+    instances: 1
+    persistent_disk: { size_mb: "20480" }
+    instance_type: { id: m1.medium }
+    additional_vm_extensions: [some-vm-extension, some-other-vm-extension]
+  some-other-job:
+    instances: automatic
+    persistent_disk: { size_mb: "20480" }
+    instance_type: { id: m1.medium }
+`

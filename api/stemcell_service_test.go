@@ -14,63 +14,146 @@ import (
 )
 
 var _ = Describe("StemcellService", func() {
-	Describe("UploadStemcell", func() {
+	Describe("ListStemcells", func() {
 		var (
-			progressClient *fakes.HttpClient
-			service        api.Api
+			fakeClient *fakes.HttpClient
+			service    api.Api
 		)
 
 		BeforeEach(func() {
-			progressClient = &fakes.HttpClient{}
+			fakeClient = &fakes.HttpClient{}
 			service = api.New(api.ApiInput{
-				ProgressClient: progressClient,
+				Client: fakeClient,
 			})
 		})
 
-		It("makes a request to upload the stemcell to the OpsManager", func() {
-			progressClient.DoReturns(&http.Response{
+		It("makes a request to list the stemcells", func() {
+			fakeClient.DoReturns(&http.Response{
 				StatusCode: http.StatusOK,
-				Body:       ioutil.NopCloser(strings.NewReader("{}")),
+				Body: ioutil.NopCloser(strings.NewReader(`{
+                  "products": [
+                    {
+                      "guid": "some-guid",
+                      "staged_stemcell_version": "1234.5",
+                      "identifier": "some-product",
+                      "available_stemcell_versions": [
+                        "1234.5", "1234.6"
+                      ]
+                    }
+                  ]
+                }`)),
 			}, nil)
 
-			output, err := service.UploadStemcell(api.StemcellUploadInput{
-				ContentLength: 10,
-				Stemcell:      strings.NewReader("some content"),
-				ContentType:   "some content-type",
-			})
+			output, err := service.ListStemcells()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(output).To(Equal(api.StemcellUploadOutput{}))
+			Expect(output).To(Equal(api.ProductStemcells{
+				Products: []api.ProductStemcell{
+					{
+						GUID:                  "some-guid",
+						StagedForDeletion:     false,
+						StagedStemcellVersion: "1234.5",
+						ProductName:           "some-product",
+						AvailableVersions: []string{
+							"1234.5",
+							"1234.6",
+						},
+					},
+				},
+			}))
 
-			request := progressClient.DoArgsForCall(0)
-			Expect(request.Method).To(Equal("POST"))
-			Expect(request.URL.Path).To(Equal("/api/v0/stemcells"))
-			Expect(request.ContentLength).To(Equal(int64(10)))
-			Expect(request.Header.Get("Content-Type")).To(Equal("some content-type"))
-
-			body, err := ioutil.ReadAll(request.Body)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(string(body)).To(Equal("some content"))
+			request := fakeClient.DoArgsForCall(0)
+			Expect(request.Method).To(Equal("GET"))
+			Expect(request.URL.Path).To(Equal("/api/v0/stemcell_assignments"))
 		})
 
 		Context("when an error occurs", func() {
 			Context("when the client errors before the request", func() {
 				It("returns an error", func() {
-					progressClient.DoReturns(&http.Response{}, errors.New("some client error"))
+					fakeClient.DoReturns(&http.Response{}, errors.New("some client error"))
 
-					_, err := service.UploadStemcell(api.StemcellUploadInput{})
-					Expect(err).To(MatchError("could not make api request to stemcells endpoint: some client error"))
+					_, err := service.ListStemcells()
+					Expect(err).To(MatchError("could not make api request to list stemcells: could not send api request to GET /api/v0/stemcell_assignments: some client error"))
 				})
 			})
 
 			Context("when the api returns a non-200 status code", func() {
 				It("returns an error", func() {
-					progressClient.DoReturns(&http.Response{
+					fakeClient.DoReturns(&http.Response{
 						StatusCode: http.StatusInternalServerError,
 						Body:       ioutil.NopCloser(strings.NewReader("{}")),
 					}, nil)
 
-					_, err := service.UploadStemcell(api.StemcellUploadInput{})
+					_, err := service.ListStemcells()
+					Expect(err).To(MatchError(ContainSubstring("request failed: unexpected response")))
+				})
+			})
+		})
+	})
+
+	Describe("AssignStemcells", func() {
+		var (
+			fakeClient *fakes.HttpClient
+			service    api.Api
+			input      api.ProductStemcells
+		)
+
+		BeforeEach(func() {
+			fakeClient = &fakes.HttpClient{}
+			service = api.New(api.ApiInput{
+				Client: fakeClient,
+			})
+
+			input = api.ProductStemcells{
+				Products: []api.ProductStemcell{
+					{
+						GUID:                  "some-guid",
+						StagedStemcellVersion: "1234.6",
+					},
+				},
+			}
+		})
+
+		It("makes a request to assign the stemcells", func() {
+			fakeClient.DoReturns(&http.Response{
+				StatusCode: http.StatusOK,
+				Body:       ioutil.NopCloser(strings.NewReader(`{}`))}, nil)
+
+			err := service.AssignStemcell(input)
+			Expect(err).NotTo(HaveOccurred())
+
+			request := fakeClient.DoArgsForCall(0)
+			Expect(request.Method).To(Equal("PATCH"))
+			Expect(request.URL.Path).To(Equal("/api/v0/stemcell_assignments"))
+			body, err := ioutil.ReadAll(request.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(body).To(MatchJSON(`{
+              "products": [
+                {
+                  "guid": "some-guid",
+                  "staged_stemcell_version": "1234.6"
+                }
+              ]
+            }`))
+		})
+
+		Context("when an error occurs", func() {
+			Context("when the client errors before the request", func() {
+				It("returns an error", func() {
+					fakeClient.DoReturns(&http.Response{}, errors.New("some client error"))
+
+					err := service.AssignStemcell(input)
+					Expect(err).To(MatchError("could not send api request to PATCH /api/v0/stemcell_assignments: some client error"))
+				})
+			})
+
+			Context("when the api returns a non-200 status code", func() {
+				It("returns an error", func() {
+					fakeClient.DoReturns(&http.Response{
+						StatusCode: http.StatusInternalServerError,
+						Body:       ioutil.NopCloser(strings.NewReader("{}")),
+					}, nil)
+
+					err := service.AssignStemcell(input)
 					Expect(err).To(MatchError(ContainSubstring("request failed: unexpected response")))
 				})
 			})

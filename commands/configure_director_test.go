@@ -3,6 +3,7 @@ package commands_test
 import (
 	"encoding/json"
 	"errors"
+	"os"
 
 	"io/ioutil"
 
@@ -15,10 +16,12 @@ import (
 
 var _ = Describe("ConfigureDirector", func() {
 	var (
-		logger  *fakes.Logger
-		service *fakes.ConfigureDirectorService
-		command commands.ConfigureDirector
-		err     error
+		logger     *fakes.Logger
+		service    *fakes.ConfigureDirectorService
+		command    commands.ConfigureDirector
+		err        error
+		config     string
+		configFile *os.File
 	)
 
 	BeforeEach(func() {
@@ -43,13 +46,69 @@ var _ = Describe("ConfigureDirector", func() {
 			api.VMExtension{Name: "some_other_vm_extension"},
 		}, nil)
 
+		service.ListInstallationsReturns([]api.InstallationsServiceOutput{
+			{
+				ID:         999,
+				Status:     "succeeded",
+				Logs:       "",
+				StartedAt:  nil,
+				FinishedAt: nil,
+				UserName:   "admin",
+			},
+		}, nil)
+
 		command = commands.NewConfigureDirector(
 			func() []string { return []string{} },
 			service,
 			logger)
 	})
 
+	JustBeforeEach(func() {
+		configFile, err = ioutil.TempFile("", "config.yml")
+		Expect(err).NotTo(HaveOccurred())
+		defer configFile.Close()
+
+		_, err = configFile.WriteString(config)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	Describe("Execute", func() {
+		BeforeEach(func() {
+			config = `
+---
+network-assignment:
+  network:
+    name: network
+  singleton_availability_zone:
+    name: singleton
+az-configuration:
+- clusters:
+  - cluster: pizza-boxes
+  name: AZ1
+networks-configuration:
+  network: network-1
+director-configuration:
+  some-director-assignment: director
+iaas-configuration:
+  some-iaas-assignment: iaas
+security-configuration:
+  some-security-assignment: security
+syslog-configuration:
+  some-syslog-assignment: syslog
+resource-configuration:
+  resource:
+    instance_type:
+      id: some-type
+vmextensions-configuration:
+- name: a_vm_extension
+  cloud_properties:
+    source_dest_check: false
+- name: another_vm_extension
+  cloud_properties:
+    foo: bar
+`
+		})
+
 		ExpectDirectorToBeConfiguredCorrectly := func() {
 			Expect(service.UpdateStagedDirectorAvailabilityZonesCallCount()).To(Equal(1))
 			Expect(service.UpdateStagedDirectorAvailabilityZonesArgsForCall(0)).To(Equal(api.AvailabilityZoneInput{
@@ -146,15 +205,7 @@ var _ = Describe("ConfigureDirector", func() {
 
 		It("configures the director", func() {
 			err := command.Execute([]string{
-				"--network-assignment", `{"network":{"name":"network"},"singleton_availability_zone":{"name":"singleton"}}`,
-				"--az-configuration", `[{"clusters":[{"cluster":"pizza-boxes"}],"name":"AZ1"}]`,
-				"--networks-configuration", `{"network":"network-1"}`,
-				"--director-configuration", `{"some-director-assignment":"director"}`,
-				"--iaas-configuration", `{"some-iaas-assignment":"iaas"}`,
-				"--security-configuration", `{"some-security-assignment":"security"}`,
-				"--syslog-configuration", `{"some-syslog-assignment":"syslog"}`,
-				"--resource-configuration", `{"resource":{"instance_type":{"id":"some-type"}}}`,
-				"--vmextensions-configuration", `[{"name":"a_vm_extension","cloud_properties":{"source_dest_check":false}},{"name":"another_vm_extension", "cloud_properties":{"foo":"bar"}}]`,
+				"--config", configFile.Name(),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -162,29 +213,8 @@ var _ = Describe("ConfigureDirector", func() {
 		})
 
 		Context("when the --config flag is set", func() {
-			Context("when other flags are set", func() {
-				It("returns an error", func() {
-					err := command.Execute([]string{"--config", "test.yml", "--az-configuration", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-					err = command.Execute([]string{"--config", "test.yml", "--networks-configuration", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-					err = command.Execute([]string{"--config", "test.yml", "--network-assignment", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-					err = command.Execute([]string{"--config", "test.yml", "--director-configuration", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-					err = command.Execute([]string{"--config", "test.yml", "--iaas-configuration", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-					err = command.Execute([]string{"--config", "test.yml", "--security-configuration", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-					err = command.Execute([]string{"--config", "test.yml", "--syslog-configuration", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-					err = command.Execute([]string{"--config", "test.yml", "--resource-configuration", "{}"})
-					Expect(err).To(MatchError("config flag can not be passed with another configuration flags"))
-				})
-			})
-
 			Context("with an invalid config", func() {
-				It("configures the director", func() {
+				It("does not configure the director", func() {
 					configYAML := `invalidYAML`
 
 					configFile, err := ioutil.TempFile("", "config.yaml")
@@ -197,7 +227,7 @@ var _ = Describe("ConfigureDirector", func() {
 						"--config", configFile.Name(),
 					})
 					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring(`could not be parsed as valid configuration: yaml: unmarshal errors`))
+					Expect(err.Error()).To(ContainSubstring(`could not be parsed as valid configuration:`))
 				})
 			})
 
@@ -372,6 +402,23 @@ var _ = Describe("ConfigureDirector", func() {
 				})
 
 			})
+
+			Context("with unrecognized top-level-keys", func() {
+				It("returns error saying the specified key", func() {
+					configYAML := `{"unrecognized-key": {"some-attr": "some-val"}, "unrecognized-other-key": {}, "network-assignment": {"some-attr1": "some-val1"}}`
+					configFile, err := ioutil.TempFile("", "config.yaml")
+					Expect(err).ToNot(HaveOccurred())
+					_, err = configFile.WriteString(configYAML)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(configFile.Close()).ToNot(HaveOccurred())
+
+					err = command.Execute([]string{
+						"--config", configFile.Name(),
+					})
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring(`the config file contains unrecognized keys: unrecognized-key, unrecognized-other-key`))
+				})
+			})
 		})
 
 		Context("when no vm_extension configuration is provided", func() {
@@ -412,34 +459,64 @@ var _ = Describe("ConfigureDirector", func() {
 				Expect(service.DeleteVMExtensionCallCount()).To(Equal(2))
 			})
 		})
+
 		Context("when some director configuration flags are provided", func() {
-			It("only updates the config for the provided flags", func() {
+			BeforeEach(func() {
+				config = `{"networks-configuration":{"network":"network-1"},"director-configuration":{"some-director-assignment":"director"}}`
+			})
+
+			It("only updates the config for the provided flags, and sets others to empty", func() {
 				err := command.Execute([]string{
-					"--networks-configuration", `{"network": "network-1"}`,
+					"--config", configFile.Name(),
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(service.UpdateStagedDirectorAvailabilityZonesCallCount()).To(Equal(0))
 				Expect(service.UpdateStagedDirectorNetworksCallCount()).To(Equal(1))
 				Expect(service.UpdateStagedDirectorNetworksArgsForCall(0)).To(Equal(api.NetworkInput{
-					Networks: json.RawMessage(`{"network": "network-1"}`),
+					Networks: json.RawMessage(`{"network":"network-1"}`),
 				}))
 				Expect(service.UpdateStagedDirectorNetworkAndAZCallCount()).To(Equal(0))
-				Expect(service.UpdateStagedDirectorPropertiesCallCount()).To(Equal(0))
+				Expect(service.UpdateStagedDirectorPropertiesCallCount()).To(Equal(1))
+				Expect(service.UpdateStagedDirectorPropertiesArgsForCall(0)).To(Equal(api.DirectorProperties{
+					IAASConfiguration:     json.RawMessage(""),
+					DirectorConfiguration: json.RawMessage("{\"some-director-assignment\":\"director\"}"),
+					SecurityConfiguration: json.RawMessage(""),
+					SyslogConfiguration:   json.RawMessage(""),
+				}))
 			})
 		})
 
-		Context("when no director configuration flags are provided", func() {
-			It("does not call the properties function ", func() {
-				err := command.Execute([]string{})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(service.UpdateStagedDirectorAvailabilityZonesCallCount()).To(Equal(0))
-				Expect(service.UpdateStagedDirectorNetworksCallCount()).To(Equal(0))
-				Expect(service.UpdateStagedDirectorNetworkAndAZCallCount()).To(Equal(0))
-				Expect(service.UpdateStagedDirectorPropertiesCallCount()).To(Equal(0))
+		Context("when there is a running installation", func() {
+			BeforeEach(func() {
+				service.ListInstallationsReturns([]api.InstallationsServiceOutput{
+					{
+						ID:         999,
+						Status:     "running",
+						Logs:       "",
+						StartedAt:  nil,
+						FinishedAt: nil,
+						UserName:   "admin",
+					},
+				}, nil)
+			})
+			It("returns an error", func() {
+				err := command.Execute([]string{
+					"--config", configFile.Name(),
+				})
+				Expect(err).To(MatchError("OpsManager does not allow configuration or staging changes while apply changes are running to prevent data loss for configuration and/or staging changes"))
+				Expect(service.ListInstallationsCallCount()).To(Equal(1))
 			})
 		})
 
 		Context("when an error occurs", func() {
+			Context("when no director configuration flags are provided", func() {
+				It("returns an error ", func() {
+					err := command.Execute([]string{})
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("missing required flag \"--config\""))
+				})
+			})
+
 			Context("when flag parser fails", func() {
 				It("returns an error", func() {
 					err := command.Execute([]string{"--foo", "bar"})
@@ -448,86 +525,130 @@ var _ = Describe("ConfigureDirector", func() {
 			})
 
 			Context("when configuring availability_zones fails", func() {
+				BeforeEach(func() {
+					config = `{"az-configuration": {}}`
+				})
+
 				It("returns an error", func() {
 					service.UpdateStagedDirectorAvailabilityZonesReturns(errors.New("az endpoint failed"))
-					err := command.Execute([]string{"--az-configuration", `{}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError("availability zones configuration could not be applied: az endpoint failed"))
 				})
 			})
 
 			Context("when configuring networks fails", func() {
+				BeforeEach(func() {
+					config = `{"networks-configuration": {}}`
+				})
+
 				It("returns an error", func() {
 					service.UpdateStagedDirectorNetworksReturns(errors.New("networks endpoint failed"))
-					err := command.Execute([]string{"--networks-configuration", `{}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError("networks configuration could not be applied: networks endpoint failed"))
 				})
 			})
 
 			Context("when configuring networks fails", func() {
+				BeforeEach(func() {
+					config = `{"network-assignment": {}}`
+				})
+
 				It("returns an error", func() {
 					service.UpdateStagedDirectorNetworkAndAZReturns(errors.New("director service failed"))
-					err := command.Execute([]string{"--network-assignment", `{}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError("network and AZs could not be applied: director service failed"))
 				})
 			})
 
 			Context("when configuring properties fails", func() {
+				BeforeEach(func() {
+					config = `{"director-configuration": {}}`
+				})
+
 				It("returns an error", func() {
 					service.UpdateStagedDirectorPropertiesReturns(errors.New("properties end point failed"))
-					err := command.Execute([]string{"--director-configuration", `{}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError("properties could not be applied: properties end point failed"))
 				})
 			})
 
 			Context("when retrieving staged products fails", func() {
+				BeforeEach(func() {
+					config = `{"resource-configuration": {}}`
+				})
+
 				It("returns an error", func() {
 					service.GetStagedProductByNameReturns(api.StagedProductsFindOutput{}, errors.New("some-error"))
-					err := command.Execute([]string{"--resource-configuration", `{}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError(ContainSubstring("some-error")))
 				})
 			})
 
 			Context("when user-provided top-level resource config is not valid JSON", func() {
+				BeforeEach(func() {
+					config = `{"resource-configuration": {{{{}`
+				})
+
 				It("returns an error", func() {
-					err := command.Execute([]string{"--resource-configuration", `{{{`})
-					Expect(err).To(MatchError(ContainSubstring("resource-configuration")))
+					err := command.Execute([]string{"--config", configFile.Name()})
+					Expect(err).To(MatchError(ContainSubstring("did not find expected ',' or '}'")))
 				})
 			})
 
 			Context("when retrieving jobs for product fails", func() {
+				BeforeEach(func() {
+					config = `{"resource-configuration": {}}`
+				})
+
 				It("returns an error", func() {
 					service.ListStagedProductJobsReturns(nil, errors.New("some-error"))
-					err := command.Execute([]string{"--resource-configuration", `{}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError(ContainSubstring("some-error")))
 				})
 			})
 
 			Context("when user-provided job does not exist", func() {
+				BeforeEach(func() {
+					config = `{"resource-configuration": {"invalid-resource": {}}}`
+				})
+
 				It("returns an error", func() {
-					err := command.Execute([]string{"--resource-configuration", `{"invalid-resource": {}}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError(ContainSubstring("invalid-resource")))
 				})
 			})
 
 			Context("when retrieving existing job config fails", func() {
+				BeforeEach(func() {
+					config = `{"resource-configuration": {"resource": {}}}`
+				})
+
 				It("returns an error", func() {
 					service.GetStagedProductJobResourceConfigReturns(api.JobProperties{}, errors.New("some-error"))
-					err := command.Execute([]string{"--resource-configuration", `{"resource": {}}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError(ContainSubstring("some-error")))
 				})
 			})
 
 			Context("when user-provided nested resource config is not valid JSON", func() {
+				BeforeEach(func() {
+					config = `{"resource-configuration": {"resource": "%%%"}}`
+				})
+
 				It("returns an error", func() {
-					err := command.Execute([]string{"--resource-configuration", `{"resource": "%%%"}`})
-					Expect(err).To(MatchError(ContainSubstring("resource-configuration")))
+					err := command.Execute([]string{"--config", configFile.Name()})
+					Expect(err).To(MatchError(ContainSubstring("could not decode resource-configuration json for job 'resource'")))
 				})
 			})
 
 			Context("when configuring the job fails", func() {
+				BeforeEach(func() {
+					config = `{"resource-configuration": {"resource": {}}}`
+				})
+
 				It("returns an error", func() {
 					service.UpdateStagedProductJobResourceConfigReturns(errors.New("some-error"))
-					err := command.Execute([]string{"--resource-configuration", `{"resource": {}}`})
+					err := command.Execute([]string{"--config", configFile.Name()})
 					Expect(err).To(MatchError(ContainSubstring("some-error")))
 				})
 			})
